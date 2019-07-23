@@ -74,10 +74,12 @@ class PcscSimLink(LinkBase):
 		"""see LinkBase.send_apdu_raw"""
 
 		apdu = h2i(pdu)
+#		print("Sending %s" % ' '.join(['%02x'%(x) for x in apdu]))
 
 		data, sw1, sw2 = self._con.transmit(apdu)
 
 		sw = [sw1, sw2]
+#		print("Received [%s]: %s" % (' '.join(['%02x'%(x) for x in sw]), ' '.join(['%02x'%(x) for x in data])))
 
 		# Return value
 		return i2h(data), i2h(sw)
