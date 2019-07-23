@@ -535,8 +535,8 @@ class SysmoUSIMSJS1(Card):
 
 	def __init__(self, ssc):
 		super(SysmoUSIMSJS1, self).__init__(ssc)
-		self._scc.cla_byte = "00"
-		self._scc.sel_ctrl = "000C"
+#		self._scc.cla_byte = "00"
+#		self._scc.sel_ctrl = "000C"
 
 	@classmethod
 	def autodetect(kls, scc):
@@ -549,9 +549,15 @@ class SysmoUSIMSJS1(Card):
 		return None
 
 	def program(self, p):
+		old_cla = self._scc.cla_byte
+		old_ctrl = self._scc.sel_ctrl
+
+		self._scc.reset_card()
+		self._scc.cla_byte = "00"
+		self._scc.sel_ctrl = "000C"
 
 		# authenticate as ADM using default key (written on the card..)
-		if not p['pin_adm']:
+		if 'pin_adm' not in p or not p['pin_adm']:
 			raise ValueError("Please provide a PIN-ADM as there is no default one")
 		self._scc.verify_chv(0x0A, h2b(p['pin_adm']))
 
@@ -578,6 +584,9 @@ class SysmoUSIMSJS1(Card):
 		# EF.SMSP
 		r = self._scc.select_file(['3f00', '7f10'])
 		data, sw = self._scc.update_record('6f42', 1, lpad(p['smsp'], 104), force_len=True)
+
+		self._scc.cla_byte = old_cla
+		self._scc.sel_ctrl = old_ctrl
 
 	def erase(self):
 		return

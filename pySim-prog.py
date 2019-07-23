@@ -124,6 +124,9 @@ def parse_options():
 	parser.add_option("--read-imsi", dest="read_imsi", action="store_true",
 			help="Read the IMSI from the CARD", default=False
 		)
+	parser.add_option("--read-iccid", dest="read_iccid", action="store_true",
+			help="Read the ICCID from the CARD", default=False
+		)
 	parser.add_option("-z", "--secret", dest="secret", metavar="STR",
 			help="Secret used for ICCID/IMSI autogen",
 		)
@@ -164,8 +167,8 @@ def parse_options():
                 return options
 
 	if options.source == 'csv':
-		if (options.imsi is None) and (options.batch_mode is False) and (options.read_imsi is False):
-			parser.error("CSV mode needs either an IMSI, --read-imsi or batch mode")
+		if (options.imsi is None) and (options.batch_mode is False) and (options.read_imsi is False) and (options.read_iccid is False):
+			parser.error("CSV mode needs either an IMSI, --read-imsi, --read-iccid or batch mode")
 		if options.read_csv is None:
 			parser.error("CSV mode requires a CSV input file")
 	elif options.source == 'cmdline':
@@ -177,7 +180,7 @@ def parse_options():
 	if (options.read_csv is not None) and (options.source != 'csv'):
 		parser.error("You cannot specify a CSV input file in source != csv")
 
-	if (options.batch_mode) and (options.num is None):
+	if (options.batch_mode) and (options.num is None) and (options.read_imsi is False) and (options.read_iccid is False):
 		options.num = 0
 
 	if (options.batch_mode):
@@ -246,28 +249,31 @@ def gen_parameters(opts):
 	options given by the user"""
 
 	# MCC/MNC
-	mcc = opts.mcc
-	mnc = opts.mnc
+	mcc = opts.get('mcc')
+	mnc = opts.get('mnc')
 
 	if not ((0 < mcc < 999) and (0 < mnc < 999)):
 		raise ValueError('mcc & mnc must be between 0 and 999')
 
-	# Digitize country code (2 or 3 digits)
-	cc_digits = _cc_digits(opts.country)
+	if opts.get('country') is None:
+		opts['country'] = 1
+
 
 	# Digitize MCC/MNC (5 or 6 digits)
 	plmn_digits = _mcc_mnc_digits(mcc, mnc)
 
 	# ICCID (19 digits, E.118), though some phase1 vendors use 20 :(
-	if opts.iccid is not None:
-		iccid = opts.iccid
+	if opts.get('iccid') is not None:
+		iccid = opts.get('iccid')
 		if not _isnum(iccid, 19) and not _isnum(iccid, 20):
 			raise ValueError('ICCID must be 19 or 20 digits !');
 
 	else:
-		if opts.num is None:
+		if opts.get('num') is None:
 			raise ValueError('Neither ICCID nor card number specified !')
 
+		# Digitize country code (2 or 3 digits)
+		cc_digits = _cc_digits(opts.get('country'))
 		iccid = (
 			'89' +			# Common prefix (telecom)
 			cc_digits +		# Country Code on 2/3 digits
@@ -276,34 +282,34 @@ def gen_parameters(opts):
 
 		ml = 18 - len(iccid)
 
-		if opts.secret is None:
+		if opts.get('secret') is None:
 			# The raw number
-			iccid += ('%%0%dd' % ml) % opts.num
+			iccid += ('%%0%dd' % ml) % opts.get('num')
 		else:
 			# Randomized digits
-			iccid += _digits(opts.secret, 'ccid', ml, opts.num)
+			iccid += _digits(opts.get('secret'), 'ccid', ml, opts.get('num'))
 
 		# Add checksum digit
 		iccid += ('%1d' % calculate_luhn(iccid))
 
 	# IMSI (15 digits usually)
-	if opts.imsi is not None:
-		imsi = opts.imsi
+	if opts.get('imsi') is not None:
+		imsi = opts.get('imsi')
 		if not _isnum(imsi):
 			raise ValueError('IMSI must be digits only !')
 
 	else:
-		if opts.num is None:
+		if opts.get('num') is None:
 			raise ValueError('Neither IMSI nor card number specified !')
 
 		ml = 15 - len(plmn_digits)
 
-		if opts.secret is None:
+		if opts.get('secret') is None:
 			# The raw number
-			msin = ('%%0%dd' % ml) % opts.num
+			msin = ('%%0%dd' % ml) % opts.get('num')
 		else:
 			# Randomized digits
-			msin = _digits(opts.secret, 'imsi', ml, opts.num)
+			msin = _digits(opts.get('secret'), 'imsi', ml, opts.get('num'))
 
 		imsi = (
 			plmn_digits +	# MCC/MNC on 5/6 digits
@@ -311,20 +317,20 @@ def gen_parameters(opts):
 		)
 
 	# SMSP
-	if opts.smsp is not None:
-		smsp = opts.smsp
+	if opts.get('smsp') is not None:
+		smsp = opts.get('smsp')
 		if not _ishex(smsp):
 			raise ValueError('SMSP must be hex digits only !')
 		if len(smsp) < 28*2:
 			raise ValueError('SMSP must be at least 28 bytes')
 
 	else:
-		if opts.smsc is not None:
-			smsc = opts.smsc
+		if opts.get('smsc') is not None:
+			smsc = opts.get('smsc')
 			if not _isnum(smsc):
 				raise ValueError('SMSC must be digits only !')
 		else:
-			smsc = '00%d' % opts.country + '5555'	# Hack ...
+			smsc = '00%d' % opts.get('country') + '5555'	# Hack ...
 
 		smsc = '%02d' % ((len(smsc) + 3)//2,) + "81" + swap_nibbles(rpad(smsc, 20))
 
@@ -338,8 +344,8 @@ def gen_parameters(opts):
 		)
 
 	# ACC
-	if opts.acc is not None:
-		acc = opts.acc
+	if opts.get('acc') is not None:
+		acc = opts.get('acc')
 		if not _ishex(acc):
 			raise ValueError('ACC must be hex digits only !')
 		if len(acc) != 2*2:
@@ -349,30 +355,32 @@ def gen_parameters(opts):
 		acc = None
 
 	# Ki (random)
-	if opts.ki is not None:
-		ki = opts.ki
+	if opts.get('ki') is not None:
+		ki = opts.get('ki')
 		if not re.match('^[0-9a-fA-F]{32}$', ki):
 			raise ValueError('Ki needs to be 128 bits, in hex format')
 	else:
 		ki = ''.join(['%02x' % random.randrange(0,256) for i in range(16)])
 
 	# OPC (random)
-	if opts.opc is not None:
-		opc = opts.opc
+	if opts.get('opc') is not None:
+		opc = opts.get('opc')
 		if not re.match('^[0-9a-fA-F]{32}$', opc):
 			raise ValueError('OPC needs to be 128 bits, in hex format')
 
-	elif opts.op is not None:
-		opc = derive_milenage_opc(ki, opts.op)
+	elif opts.get('op') is not None:
+		opc = derive_milenage_opc(ki, opts.get('op'))
 	else:
 		opc = ''.join(['%02x' % random.randrange(0,256) for i in range(16)])
-
-	if opts.pin_adm is not None:
-		if len(opts.pin_adm) <= 8:
-			pin_adm = ''.join(['%02x'%(ord(x)) for x in opts.pin_adm])
+	
+	if opts.get('pin_adm') is None:
+		opts['pin_adm'] = opts.get('adm1')
+	if opts.get('pin_adm') is not None:
+		if len(opts.get('pin_adm')) <= 8:
+			pin_adm = ''.join(['%02x'%(ord(x)) for x in opts.get('pin_adm')])
 			pin_adm = rpad(pin_adm, 16)
-		elif len(opts.pin_adm) == 16:
-			pin_adm = opts.pin_adm
+		elif len(opts.get('pin_adm')) == 16:
+			pin_adm = opts.get('pin_adm')
 		else:
 			raise ValueError("PIN-ADM needs to be <=8 digits (ascii) or exactly 16 digits (raw hex)")
 	else:
@@ -381,7 +389,7 @@ def gen_parameters(opts):
 
 	# Return that
 	return {
-		'name'	: opts.name,
+		'name'	: opts.get('name'),
 		'iccid'	: iccid,
 		'mcc'	: mcc,
 		'mnc'	: mnc,
@@ -414,32 +422,49 @@ def write_params_csv(opts, params):
 		import csv
 		row = ['name', 'iccid', 'mcc', 'mnc', 'imsi', 'smsp', 'ki', 'opc']
 		f = open(opts.write_csv, 'a')
-		cw = csv.writer(f)
-		cw.writerow([params[x] for x in row])
+		cw = csv.DictWriter(f, row)
+		if f.tell() == 0:
+			cw.writeheader()
+		cw.writerow(params)
 		f.close()
 
-def _read_params_csv(opts, imsi):
+def lower_first(iterator):
+    import itertools
+    return itertools.chain([next(iterator).lower()], iterator)
+
+def _read_params_csv(opts, keys=None):
 	import csv
-	row = ['name', 'iccid', 'mcc', 'mnc', 'imsi', 'smsp', 'ki', 'opc']
+#	row = ['name', 'iccid', 'mcc', 'mnc', 'imsi', 'smsp', 'ki', 'opc']
 	f = open(opts.read_csv, 'r')
-	cr = csv.DictReader(f, row)
+	cr = csv.DictReader(lower_first(f), skipinitialspace=True)
 	i = 0
+	if keys:
+	    print("Looking for SIM matching %s" % keys)
 	for row in cr:
 		if opts.num is not None and opts.read_imsi is False:
 			if opts.num == i:
+				print("Selecting row %d from CSV" % i)
 				f.close()
-				return row;
-			i += 1
-		if row['imsi'] == imsi:
-			f.close()
-			return row;
+				return row
+		if keys:
+			match = True
+			for key, value in keys.iteritems():
+				if row[key] != value:
+					match = False
+					break
+			if match:
+				print("Selecting row from CSV matching %s" % keys)
+				f.close()
+				return row
+		i += 1
 
 	f.close()
 	return None
 
-def read_params_csv(opts, imsi):
-	row = _read_params_csv(opts, imsi)
+def read_params_csv(opts, keys=None):
+	row = _read_params_csv(opts, keys)
 	if row is not None:
+		print(row)
 		row['mcc'] = int(row['mcc'])
 		row['mnc'] = int(row['mnc'])
 	return row
@@ -578,52 +603,65 @@ if __name__ == '__main__':
 
 	while not done:
 
-		if opts.dry_run is False:
-			# Connect transport
-			print "Insert card now (or CTRL-C to cancel)"
-			sl.wait_for_card(newcardonly=not first)
+		# Connect transport
+		print "Insert card now (or CTRL-C to cancel)"
+		sl.wait_for_card(newcardonly=not first)
 
 		# Not the first anymore !
 		first = False
 
-		if opts.dry_run is False:
-			# Get card
-			card = card_detect(opts, scc)
-			if card is None:
-				if opts.batch_mode:
-					first = False
-					continue
-				else:
-					sys.exit(-1)
+		# Get card
+		card = card_detect(opts, scc)
+		if card is None:
+			if opts.batch_mode:
+				first = False
+				continue
+			else:
+				sys.exit(-1)
 
-                        # Probe only
-                        if opts.probe:
-                                break;
+                # Probe only
+                if opts.probe:
+                        break;
 
-			# Erase if requested
-			if opts.erase:
-				print "Formatting ..."
-				card.erase()
-				card.reset()
+		# Erase if requested
+		if opts.erase and opts.dry_run is not True:
+			print "Formatting ..."
+			card.erase()
+			card.reset()
 
 		# Generate parameters
 		if opts.source == 'cmdline':
-			cp = gen_parameters(opts)
+			cp = gen_parameters(vars(opts))
+			print(card.read_iccid())
 		elif opts.source == 'csv':
+			row_keys = {}
+
 			if opts.read_imsi:
-				if opts.dry_run:
-					# Connect transport
-					print "Insert card now (or CTRL-C to cancel)"
-					sl.wait_for_card(newcardonly=not first)
 				(res,_) = scc.read_binary(EF['IMSI'])
 				imsi = swap_nibbles(res)[3:]
-			else:
-				imsi = opts.imsi
-			cp = read_params_csv(opts, imsi)
+				row_keys['imsi'] = imsi
+			elif opts.imsi:
+				row_keys['imsi'] = opts.imsi
+
+			if opts.read_iccid:
+				iccid = card.read_iccid()[0]
+				if iccid != None:
+					row_keys['iccid'] = iccid
+				else:
+				    print "Error reading ICCID from card"
+				    sys.exit(1)
+			elif opts.iccid:
+				row_keys['iccid'] = opts.iccid
+
+			cp = read_params_csv(opts, row_keys)
+			print(cp)
+			cp = gen_parameters(cp)
+			print(cp)
 		if cp is None:
 			print "Error reading parameters\n"
 			sys.exit(2)
-		print_parameters(cp)
+		#print_parameters(cp)
+		print(cp)
 
 		if opts.dry_run is False:
 			# Program the card
